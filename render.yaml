@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fashion-shop-node-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+
+  - type: worker
+    name: fashion-shop-telegram-bot
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm run bot
+
+  - type: web
+    name: fashion-shop-react-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
