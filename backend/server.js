@@ -1,422 +1,213 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { initDb } from "./db.js";
-import { seedDatabase } from "./seed.js";
-import { sendTelegramMessage } from "./telegram.js";
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { initDb } from './db.js';
+import { seedDatabase } from './seed.js';
+import { sendTelegramMessage } from './telegram.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
+const rawOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map(v => v.trim()).filter(Boolean);
 
-const rawOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173")
-  .split(",")
-  .map((v) => v.trim())
-  .filter(Boolean);
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (rawOrigins.includes("*") || rawOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error("CORS blocked"));
-    },
-    credentials: true
-  })
-);
-
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || rawOrigins.includes('*') || rawOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('CORS blocked'));
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 const db = await initDb();
 await seedDatabase(db);
 
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer_name TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    address TEXT NOT NULL,
-    items TEXT NOT NULL,
-    total REAL NOT NULL,
-    status TEXT DEFAULT 'new',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-const adminEmail = "admin@shop.local";
-const adminPassword = "admin123";
-
-const existingAdmin = await db.get(
-  `SELECT * FROM users WHERE email = ?`,
-  [adminEmail]
-);
-
-if (!existingAdmin) {
-  const hashed = await bcrypt.hash(adminPassword, 10);
-  await db.run(
-    `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
-    ["Admin", adminEmail, hashed, "admin"]
-  );
-  console.log("Default admin created: admin@shop.local / admin123");
+function parseCsv(value) {
+  return String(value || '').split(',').map(x => x.trim()).filter(Boolean);
 }
 
-function createToken(user) {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role
-    },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+function productToJson(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    price: p.price,
+    old_price: p.old_price,
+    sizes: parseCsv(p.sizes),
+    colors: parseCsv(p.colors),
+    image: p.image,
+    description: p.description,
+    stock: p.stock
+  };
 }
 
-function authMiddleware(req, res, next) {
+function authRequired(req, res, next) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return res.status(401).json({ detail: 'Token талап кылынат' });
   try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ message: "Токен жок" });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(auth.slice(7), JWT_SECRET);
     next();
-  } catch (error) {
-    return res.status(401).json({ message: "Токен жараксыз" });
+  } catch {
+    res.status(401).json({ detail: 'Token жараксыз' });
   }
 }
 
-function adminMiddleware(req, res, next) {
-  if (req.user?.role !== "admin") {
-    return res.status(403).json({ message: "Уруксат жок" });
-  }
+function adminRequired(req, res, next) {
+  if (req.user?.role !== 'admin') return res.status(403).json({ detail: 'Админ гана кире алат' });
   next();
 }
 
-app.get("/", (req, res) => {
-  res.json({ message: "Node backend + Telegram иштеп жатат" });
+app.get('/', (req, res) => res.json({ message: 'Node backend + Telegram иштеп жатат' }));
+app.get('/health', (req, res) => res.json({ ok: true }));
+
+app.post('/auth/register', async (req, res) => {
+  const { full_name, email, password } = req.body ?? {};
+  if (!full_name || !email || !password) return res.status(400).json({ detail: 'Бардык талааларды толтуруңуз' });
+
+  const exists = await db.get('SELECT id FROM users WHERE email = ?', [email]);
+  if (exists) return res.status(400).json({ detail: 'Бул email мурунтан бар' });
+
+  const password_hash = await bcrypt.hash(password, 10);
+  await db.run('INSERT INTO users (full_name, email, password_hash, role) VALUES (?, ?, ?, ?)', [full_name, email, password_hash, 'user']);
+  res.json({ message: 'Катталдыңыз' });
 });
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body ?? {};
+  const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+  if (!user) return res.status(401).json({ detail: 'Email же пароль туура эмес' });
+
+  const ok = await bcrypt.compare(password, user.password_hash);
+  if (!ok) return res.status(401).json({ detail: 'Email же пароль туура эмес' });
+
+  const token = jwt.sign({ user_id: user.id, email: user.email, role: user.role, full_name: user.full_name }, JWT_SECRET, { expiresIn: '72h' });
+  res.json({ token, user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role } });
 });
 
-app.get("/categories", async (req, res) => {
-  try {
-    const rows = await db.all(
-      `SELECT DISTINCT category FROM products ORDER BY category ASC`
-    );
-    res.json(rows.map((r) => r.category));
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Категорияларды алуу мүмкүн болбоду" });
+app.get('/products', async (req, res) => {
+  const { category, search } = req.query;
+  let sql = 'SELECT * FROM products WHERE 1=1';
+  const params = [];
+  if (category) { sql += ' AND LOWER(category) = LOWER(?)'; params.push(category); }
+  if (search) { sql += ' AND (LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?))'; params.push(`%${search}%`, `%${search}%`); }
+  sql += ' ORDER BY id DESC';
+  const rows = await db.all(sql, params);
+  res.json(rows.map(productToJson));
+});
+
+app.get('/products/:id', async (req, res) => {
+  const row = await db.get('SELECT * FROM products WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ detail: 'Товар табылган жок' });
+  res.json(productToJson(row));
+});
+
+app.get('/categories', async (req, res) => {
+  const rows = await db.all('SELECT DISTINCT category FROM products ORDER BY category ASC');
+  res.json(rows.map(r => r.category));
+});
+
+app.get('/payment-methods', (req, res) => {
+  res.json(['Накталай', 'Мбанк', 'О!Деньги', 'Элкарт/Карта']);
+});
+
+app.post('/orders', async (req, res) => {
+  const { customer_name, phone, address, payment_method, items } = req.body ?? {};
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ detail: 'Корзина бош' });
+
+  let total = 0;
+  const prepared = [];
+
+  for (const item of items) {
+    const p = await db.get('SELECT * FROM products WHERE id = ?', [item.product_id]);
+    if (!p) return res.status(404).json({ detail: `Товар жок: ${item.product_id}` });
+    if (!parseCsv(p.sizes).includes(item.size)) return res.status(400).json({ detail: `Өлчөм туура эмес: ${item.size}` });
+    if (!parseCsv(p.colors).includes(item.color)) return res.status(400).json({ detail: `Түс туура эмес: ${item.color}` });
+    if (Number(item.qty) < 1) return res.status(400).json({ detail: 'Саны 1ден аз болбошу керек' });
+    if (Number(item.qty) > Number(p.stock)) return res.status(400).json({ detail: `Складда жетишсиз: ${p.name}` });
+
+    const subtotal = Number(p.price) * Number(item.qty);
+    total += subtotal;
+    prepared.push({ p, item, subtotal });
   }
-});
 
-app.get("/payment-methods", (req, res) => {
-  res.json([
-    { id: "cash", name: "Накталай" },
-    { id: "mbank", name: "MBank" },
-    { id: "optima", name: "Optima Bank" },
-    { id: "elsom", name: "Элсом" }
-  ]);
-});
+  const result = await db.run(
+    'INSERT INTO orders (customer_name, phone, address, payment_method, total) VALUES (?, ?, ?, ?, ?)',
+    [customer_name, phone, address, payment_method, total]
+  );
 
-app.get("/products", async (req, res) => {
-  try {
-    const { category, search } = req.query;
-    let sql = `SELECT * FROM products WHERE 1=1`;
-    const params = [];
-
-    if (category) {
-      sql += ` AND category = ?`;
-      params.push(category);
-    }
-
-    if (search) {
-      sql += ` AND (name LIKE ? OR description LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    sql += ` ORDER BY id DESC`;
-
-    const rows = await db.all(sql, params);
-
-    const products = rows.map((row) => ({
-      ...row,
-      sizes: JSON.parse(row.sizes || "[]"),
-      colors: JSON.parse(row.colors || "[]")
-    }));
-
-    res.json(products);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Товарларды алуу мүмкүн болбоду" });
-  }
-});
-
-app.get("/products/:id", async (req, res) => {
-  try {
-    const row = await db.get(
-      `SELECT * FROM products WHERE id = ?`,
-      [req.params.id]
-    );
-
-    if (!row) {
-      return res.status(404).json({ message: "Товар табылган жок" });
-    }
-
-    const product = {
-      ...row,
-      sizes: JSON.parse(row.sizes || "[]"),
-      colors: JSON.parse(row.colors || "[]")
-    };
-
-    res.json(product);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Товарды алуу мүмкүн болбоду" });
-  }
-});
-
-app.post("/auth/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "Бардык талааларды толтур" });
-    }
-
-    const existing = await db.get(
-      `SELECT * FROM users WHERE email = ?`,
-      [email]
-    );
-
-    if (existing) {
-      return res.status(400).json({ message: "Бул email буга чейин катталган" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const result = await db.run(
-      `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
-      [name, email, hashedPassword, "user"]
-    );
-
-    const user = {
-      id: result.lastID,
-      name,
-      email,
-      role: "user"
-    };
-
-    const token = createToken(user);
-
-    res.json({
-      message: "Каттоо ийгиликтүү болду",
-      token,
-      user
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Каттоо учурунда ката кетти" });
-  }
-});
-
-app.post("/auth/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await db.get(
-      `SELECT * FROM users WHERE email = ?`,
-      [email]
-    );
-
-    if (!user) {
-      return res.status(400).json({ message: "Колдонуучу табылган жок" });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      return res.status(400).json({ message: "Сырсөз туура эмес" });
-    }
-
-    const token = createToken(user);
-
-    res.json({
-      message: "Кирүү ийгиликтүү",
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Кирүүдө ката кетти" });
-  }
-});
-
-app.get("/auth/me", authMiddleware, async (req, res) => {
-  try {
-    const user = await db.get(
-      `SELECT id, name, email, role, created_at FROM users WHERE id = ?`,
-      [req.user.id]
-    );
-
-    if (!user) {
-      return res.status(404).json({ message: "Колдонуучу табылган жок" });
-    }
-
-    res.json(user);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Колдонуучуну алуу мүмкүн болбоду" });
-  }
-});
-
-app.post("/orders", async (req, res) => {
-  try {
-    const { customerName, phone, address, items, total } = req.body;
-
-    if (!customerName || !phone || !address || !items || !items.length) {
-      return res.status(400).json({ message: "Маалымат толук эмес" });
-    }
-
-    const result = await db.run(
-      `INSERT INTO orders (customer_name, phone, address, items, total)
-       VALUES (?, ?, ?, ?, ?)`,
-      [customerName, phone, address, JSON.stringify(items), total]
-    );
-
-    const orderId = result.lastID;
-
-    const itemsText = items
-      .map((item, index) => {
-        return `${index + 1}) ${item.name} x${item.qty} - ${item.price} сом`;
-      })
-      .join("\n");
-
-    const text = `
-🛒 Жаңы заказ!
-Заказ №: ${orderId}
-
-👤 Аты: ${customerName}
-📞 Тел: ${phone}
-📍 Дарек: ${address}
-
-📦 Товарлар:
-${itemsText}
-
-💰 Жалпы сумма: ${total} сом
-    `.trim();
-
-    try {
-      await sendTelegramMessage(text);
-    } catch (e) {
-      console.error("Telegram send error:", e.message);
-    }
-
-    res.json({
-      message: "Заказ ийгиликтүү кабыл алынды",
-      orderId
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Сервер катасы" });
-  }
-});
-
-app.get("/orders", authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const rows = await db.all(
-      `SELECT * FROM orders ORDER BY created_at DESC`
-    );
-
-    const orders = rows.map((row) => ({
-      ...row,
-      items: JSON.parse(row.items || "[]")
-    }));
-
-    res.json(orders);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Заказдарды алуу мүмкүн болбоду" });
-  }
-});
-
-app.patch("/orders/:id/status", authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).json({ message: "Статус жок" });
-    }
-
+  for (const row of prepared) {
     await db.run(
-      `UPDATE orders SET status = ? WHERE id = ?`,
-      [status, req.params.id]
+      'INSERT INTO order_items (order_id, product_id, product_name, qty, size, color, price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [result.lastID, row.p.id, row.p.name, row.item.qty, row.item.size, row.item.color, row.p.price, row.subtotal]
     );
-
-    res.json({ message: "Статус жаңыртылды" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Статусту жаңыртуу мүмкүн болбоду" });
+    await db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [row.item.qty, row.p.id]);
   }
+
+  const orderLines = prepared.map((row, index) =>
+    `${index + 1}) ${row.p.name} | ${row.item.qty} даана | ${row.item.size} | ${row.item.color} | ${Math.round(row.subtotal)} сом`
+  ).join('\n');
+
+  const tgMessage = [
+    '✅ <b>Жаңы заказ келди</b>',
+    '',
+    `<b>Заказ №:</b> ${result.lastID}`,
+    `<b>Кардар:</b> ${customer_name}`,
+    `<b>Телефон:</b> ${phone}`,
+    `<b>Дарек:</b> ${address}`,
+    `<b>Төлөм:</b> ${payment_method}`,
+    '',
+    '<b>Товарлар:</b>',
+    orderLines,
+    '',
+    `<b>Жалпы сумма:</b> ${Math.round(total)} сом`
+  ].join('\n');
+
+  await sendTelegramMessage(tgMessage);
+
+  res.json({ message: 'Заказ кабыл алынды', order_id: result.lastID, total });
 });
 
-app.get("/admin/stats", authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const productsCount = await db.get(`SELECT COUNT(*) as count FROM products`);
-    const ordersCount = await db.get(`SELECT COUNT(*) as count FROM orders`);
-    const usersCount = await db.get(`SELECT COUNT(*) as count FROM users`);
-    const revenue = await db.get(`SELECT COALESCE(SUM(total), 0) as total FROM orders`);
+app.get('/admin/stats', authRequired, adminRequired, async (req, res) => {
+  const products = await db.get('SELECT COUNT(*) as count FROM products');
+  const orders = await db.get('SELECT COUNT(*) as count FROM orders');
+  const users = await db.get('SELECT COUNT(*) as count FROM users');
+  const revenue = await db.get('SELECT COALESCE(SUM(total), 0) as total FROM orders');
+  res.json({ products_count: products.count, orders_count: orders.count, users_count: users.count, revenue: revenue.total });
+});
 
-    res.json({
-      products: productsCount.count,
-      orders: ordersCount.count,
-      users: usersCount.count,
-      revenue: revenue.total
+app.get('/admin/orders', authRequired, adminRequired, async (req, res) => {
+  const orders = await db.all('SELECT * FROM orders ORDER BY id DESC');
+  const result = [];
+  for (const order of orders) {
+    const items = await db.all('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
+    result.push({
+      id: order.id,
+      customer_name: order.customer_name,
+      phone: order.phone,
+      address: order.address,
+      payment_method: order.payment_method,
+      status: order.status,
+      total: order.total,
+      items: items.map(i => ({ product_name: i.product_name, qty: i.qty, size: i.size, color: i.color, subtotal: i.subtotal }))
     });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Статистиканы алуу мүмкүн болбоду" });
   }
+  res.json(result);
 });
 
-app.use((err, req, res, next) => {
-  if (err.message === "CORS blocked") {
-    return res.status(403).json({ message: "CORS blocked" });
-  }
-  console.error(err);
-  res.status(500).json({ message: "Ички сервер катасы" });
+app.post('/admin/products', authRequired, adminRequired, async (req, res) => {
+  const { name, category, price, old_price = 0, sizes = [], colors = [], image = '', description = '', stock = 0 } = req.body ?? {};
+  if (!name || !category) return res.status(400).json({ detail: 'Товар маалыматын толук жазыңыз' });
+
+  const result = await db.run(
+    'INSERT INTO products (name, category, price, old_price, sizes, colors, image, description, stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [name, category, price, old_price, sizes.join(','), colors.join(','), image, description, stock]
+  );
+  const p = await db.get('SELECT * FROM products WHERE id = ?', [result.lastID]);
+  res.json(productToJson(p));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
