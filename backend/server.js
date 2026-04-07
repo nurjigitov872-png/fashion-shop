@@ -10,7 +10,7 @@ import { sendTelegramMessage } from './telegram.js';
 dotenv.config();
 
 const app = express();
-const PORT = 9000;
+const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
 const rawOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map(v => v.trim()).filter(Boolean);
 
