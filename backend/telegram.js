@@ -19,7 +19,7 @@ if (bot) {
     try {
       await bot.sendMessage(
         msg.chat.id,
-        "Добро пожаловать в Bars 👕",
+        "Добро пожаловать в KG Style Bot 👕",
         {
           reply_markup: {
             inline_keyboard: [
