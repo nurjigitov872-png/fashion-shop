@@ -242,7 +242,7 @@ export default function App() {
               <input type="password" placeholder="Пароль" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} required />
               <button type="submit">Кирүү</button>
             </form>
-            <p className="small">Admin login: admin@shop.local / admin123</p>
+            
             <div className="msg">{loginMsg}</div>
           </div>
         </section>}
