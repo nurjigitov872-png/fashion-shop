@@ -6,6 +6,7 @@ dotenv.config();
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
 const SHOP_URL = process.env.SHOP_URL || "https://fashion-shop-1-fs8l.onrender.com";
+const API_URL = process.env.API_URL || "https://fashion-shop-8z3t.onrender.com";
 const MBANK_NUMBER = "0704564756";
 
 if (!token) {
@@ -14,18 +15,14 @@ if (!token) {
 
 const bot = token ? new TelegramBot(token, { polling: true }) : null;
 
-/**
- * Кардардан чек кабыл алуу үчүн убактылуу абал сактайбыз
- * key = telegram chat id
- * value = { step: "order_id" | "photo", orderId?: string }
- */
+// чек жөнөтүү үчүн убактылуу эс
 const waitingForReceipt = new Map();
 
 function mainMenu() {
   return {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "🛍 Каталог", url: SHOP_URL }],
+        [{ text: "🛍 Открыть магазин", url: SHOP_URL }],
         [{ text: "💳 Чек жөнөтүү", callback_data: "send_receipt" }],
         [{ text: "📦 Заказдарым", callback_data: "my_orders" }],
         [{ text: "ℹ️ Жардам", callback_data: "help" }]
@@ -37,12 +34,14 @@ function mainMenu() {
 if (bot) {
   bot.onText(/\/start/, async (msg) => {
     try {
-      console.log("START OK:", msg.chat.id);
-      console.log("CHAT ID:", msg.chat.id);
+      const telegramChatId = msg.chat.id;
+
+      console.log("START OK:", telegramChatId);
+      console.log("CHAT ID:", telegramChatId);
 
       await bot.sendMessage(
-        msg.chat.id,
-        "Добро пожаловать в KG Style Bot 👕\n\nТөмөндөн керектүү бөлүмдү тандаңыз:",
+        telegramChatId,
+        "👋 Добро пожаловать в KG Style Bot 👕\n\nТөмөндөн бөлүм тандаңыз:",
         mainMenu()
       );
     } catch (e) {
@@ -85,9 +84,43 @@ if (bot) {
 1) Сайттан товар тандаңыз
 2) Заказ бериңиз
 3) Мбанк / O!Деньги тандасаңыз, номерге төлөйсүз: ${MBANK_NUMBER}
-4) Андан кийин боттон "Чек жөнөтүү" басып, заказ № жана чек сүрөтүн жибересиз`,
+4) Андан кийин боттон "Чек жөнөтүү" басып, заказ № жана чек сүрөтүн жибересиз
+5) Эгер жакпай калса, боттон же сайттан заказды отмена кылса болот`,
           mainMenu()
         );
+      }
+
+      if (data.startsWith("cancel_order_")) {
+        const orderId = data.replace("cancel_order_", "");
+
+        try {
+          const res = await fetch(`${API_URL}/orders/${orderId}/cancel`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json"
+            }
+          });
+
+          const result = await res.json();
+
+          if (!res.ok) {
+            await bot.sendMessage(
+              telegramChatId,
+              `❌ Отмена болгон жок: ${result.detail || "ката"}`
+            );
+          } else {
+            await bot.sendMessage(
+              telegramChatId,
+              `✅ Заказ №${orderId} отмена болду.`,
+              mainMenu()
+            );
+          }
+        } catch (e) {
+          await bot.sendMessage(
+            telegramChatId,
+            `❌ Отмена болгон жок: ${e.message}`
+          );
+        }
       }
 
       await bot.answerCallbackQuery(query.id);
@@ -133,7 +166,9 @@ if (bot) {
 
         await bot.sendMessage(
           telegramChatId,
-          `✅ Чек жөнөтүлдү!\n\nЗаказ №${state.orderId} текшерүүгө жөнөтүлдү.`,
+          `✅ Чек жөнөтүлдү!
+
+Заказ №${state.orderId} текшерүүгө жөнөтүлдү.`,
           mainMenu()
         );
 
@@ -143,6 +178,8 @@ if (bot) {
       console.error("MESSAGE ERROR:", e.message);
     }
   });
+
+  console.log("✅ Telegram бот иштеп жатат...");
 }
 
 export async function sendTelegramMessage(text) {
@@ -166,11 +203,22 @@ export async function sendOrderAccepted(order) {
     .join("\n");
 
   let paymentText = "";
-  if (order.payment_method === "mbank" || order.payment_method === "Мбанк" || order.payment_method === "О!Деньги") {
-    paymentText = `💳 Мбанк / O!Деньги: ${MBANK_NUMBER}\n🧾 Төлөгөндөн кийин боттон "Чек жөнөтүү" басып, заказ № жана чек сүрөтүн жөнөтүңүз.`;
-  } else if (order.payment_method === "cash" || order.payment_method === "Накталай") {
+  if (
+    order.payment_method === "mbank" ||
+    order.payment_method === "Мбанк" ||
+    order.payment_method === "О!Деньги"
+  ) {
+    paymentText = `💳 Мбанк / O!Деньги: ${MBANK_NUMBER}
+🧾 Төлөгөндөн кийин боттон "Чек жөнөтүү" басып, заказ № жана чек сүрөтүн жөнөтүңүз.`;
+  } else if (
+    order.payment_method === "cash" ||
+    order.payment_method === "Накталай"
+  ) {
     paymentText = "💵 Накталай төлөм";
-  } else if (order.payment_method === "card" || order.payment_method === "Карта") {
+  } else if (
+    order.payment_method === "card" ||
+    order.payment_method === "Карта"
+  ) {
     paymentText = "💳 Карта аркылуу төлөм";
   } else {
     paymentText = `💰 Төлөм түрү: ${order.payment_method || "көрсөтүлгөн эмес"}`;
@@ -196,7 +244,8 @@ ${itemsText}
     reply_markup: {
       inline_keyboard: [
         [{ text: "Открыть магазин", url: SHOP_URL }],
-        [{ text: "💳 Чек жөнөтүү", callback_data: "send_receipt" }]
+        [{ text: "💳 Чек жөнөтүү", callback_data: "send_receipt" }],
+        [{ text: "❌ Заказды отмена кылуу", callback_data: `cancel_order_${order.orderId}` }]
       ]
     }
   });
@@ -207,7 +256,9 @@ export async function sendOrderCompleted(orderId) {
 
   await bot.sendMessage(
     chatId,
-    `📦 Ваш заказ завершен!\n\nЗаказ №${orderId}`,
+    `📦 Ваш заказ завершен!
+
+Заказ №${orderId}`,
     {
       reply_markup: {
         inline_keyboard: [
