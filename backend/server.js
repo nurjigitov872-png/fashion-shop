@@ -271,8 +271,8 @@ app.post('/orders', async (req, res) => {
     }
 
     const result = await db.run(
-      'INSERT INTO orders (customer_name, phone, address, payment_method, total) VALUES (?, ?, ?, ?, ?)',
-      [customer_name, phone, address, payment_method, total]
+      'INSERT INTO orders (customer_name, phone, address, payment_method, total, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [customer_name, phone, address, payment_method, total, 'new']
     );
 
     const orderId = result.lastID;
@@ -304,6 +304,7 @@ app.post('/orders', async (req, res) => {
         customerName: customer_name,
         phone,
         address,
+        payment_method,
         items: prepared.map(row => ({
           name: row.p.name,
           qty: row.item.qty,
@@ -326,6 +327,65 @@ app.post('/orders', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ detail: 'Сервер катасы' });
+  }
+});
+
+app.get('/orders/by-phone/:phone', async (req, res) => {
+  try {
+    const rows = await db.all(
+      'SELECT * FROM orders WHERE phone = ? ORDER BY id DESC',
+      [req.params.phone]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ detail: 'Заказдарды алуу мүмкүн болбоду' });
+  }
+});
+
+app.patch('/orders/:id/cancel', async (req, res) => {
+  try {
+    const order = await db.get(
+      'SELECT * FROM orders WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!order) {
+      return res.status(404).json({ detail: 'Заказ табылган жок' });
+    }
+
+    if (!['new', 'confirmed'].includes(order.status)) {
+      return res.status(400).json({ detail: 'Бул заказды отмена кылууга болбойт' });
+    }
+
+    await db.run(
+      'UPDATE orders SET status = ? WHERE id = ?',
+      ['cancelled', req.params.id]
+    );
+
+    const items = await db.all(
+      'SELECT * FROM order_items WHERE order_id = ?',
+      [req.params.id]
+    );
+
+    for (const item of items) {
+      await db.run(
+        'UPDATE products SET stock = stock + ? WHERE id = ?',
+        [item.qty, item.product_id]
+      );
+    }
+
+    try {
+      await sendTelegramMessage(`❌ Заказ №${req.params.id} клиент тарабынан отмена болду`);
+    } catch (e) {
+      console.error('Telegram cancel send error:', e.message);
+    }
+
+    res.json({ message: 'Заказ отмена болду' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ detail: 'Отмена учурунда ката кетти' });
   }
 });
 
