@@ -23,15 +23,27 @@ function ProductCard({ product, onAdd }) {
         <div className="meta">Түс: {(product.colors || []).join(', ')}</div>
         <div className="meta">Склад: {product.stock}</div>
 
-        <select className="selector" value={size} onChange={(e) => setSize(e.target.value)}>
+        <select
+          className="selector"
+          value={size}
+          onChange={(e) => setSize(e.target.value)}
+        >
           {(product.sizes || []).map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>
+              {s}
+            </option>
           ))}
         </select>
 
-        <select className="selector" value={color} onChange={(e) => setColor(e.target.value)}>
+        <select
+          className="selector"
+          value={color}
+          onChange={(e) => setColor(e.target.value)}
+        >
           {(product.colors || []).map((c) => (
-            <option key={c} value={c}>{c}</option>
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
         </select>
 
@@ -43,7 +55,9 @@ function ProductCard({ product, onAdd }) {
             value={qty}
             onChange={(e) => setQty(e.target.value)}
           />
-          <button onClick={() => onAdd(product, size, color, qty)}>Корзинага</button>
+          <button onClick={() => onAdd(product, size, color, qty)}>
+            Корзинага
+          </button>
         </div>
       </div>
     </div>
@@ -62,13 +76,25 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
 
-  const [cart, setCart] = useState(() => JSON.parse(localStorage.getItem('fashion_cart_full_tg') || '[]'))
+  const [cart, setCart] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('fashion_cart_full_tg') || '[]')
+    } catch {
+      return []
+    }
+  })
+
   const [token, setToken] = useState(localStorage.getItem('fashion_token_full_tg') || '')
-  const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('fashion_user_full_tg') || 'null'))
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('fashion_user_full_tg') || 'null')
+    } catch {
+      return null
+    }
+  })
 
   const [stats, setStats] = useState(null)
   const [orders, setOrders] = useState([])
-
   const [myOrders, setMyOrders] = useState([])
   const [myOrdersPhone, setMyOrdersPhone] = useState('')
 
@@ -127,7 +153,9 @@ export default function App() {
   async function request(path, options = {}) {
     const res = await fetch(`${API}${path}`, options)
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || 'Сурам ишке ашкан жок')
+    if (!res.ok) {
+      throw new Error(data.detail || 'Сурам ишке ашкан жок')
+    }
     return data
   }
 
@@ -142,13 +170,14 @@ export default function App() {
       setProducts(p)
       setCategories(c)
       setPaymentMethods(pay)
+
       setCheckoutForm((prev) => ({
         ...prev,
         payment_method: pay[0] || ''
       }))
 
       if (user?.role === 'admin' && token) {
-        loadAdmin(token)
+        await loadAdmin(token)
       }
     } catch (err) {
       console.error(err)
@@ -164,7 +193,8 @@ export default function App() {
       ])
       setStats(s)
       setOrders(o)
-    } catch {
+    } catch (err) {
+      console.error(err)
       setStats(null)
       setOrders([])
     }
@@ -172,12 +202,9 @@ export default function App() {
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const matchSearch =
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.description.toLowerCase().includes(search.toLowerCase())
-
+      const text = `${p.name} ${p.description}`.toLowerCase()
+      const matchSearch = text.includes(search.toLowerCase())
       const matchCategory = category ? p.category === category : true
-
       return matchSearch && matchCategory
     })
   }, [products, search, category])
@@ -247,7 +274,7 @@ export default function App() {
       setLoginMsg(`Кирдиңиз: ${data.user.full_name} (${data.user.role})`)
 
       if (data.user.role === 'admin') {
-        loadAdmin(data.token)
+        await loadAdmin(data.token)
       }
     } catch (err) {
       setLoginMsg(err.message)
@@ -296,7 +323,7 @@ export default function App() {
       setMyOrdersPhone(checkoutForm.phone)
 
       if (user?.role === 'admin' && token) {
-        loadAdmin()
+        await loadAdmin()
       }
     } catch (err) {
       setCheckoutMsg(err.message)
@@ -338,7 +365,7 @@ export default function App() {
         stock: ''
       })
       setProducts(await request('/products'))
-      loadAdmin()
+      await loadAdmin()
     } catch (err) {
       setAdminMsg(err.message)
     }
@@ -373,7 +400,7 @@ export default function App() {
       setProducts(await request('/products'))
 
       if (user?.role === 'admin' && token) {
-        loadAdmin()
+        await loadAdmin()
       }
     } catch (err) {
       setMyOrdersMsg(err.message)
@@ -392,7 +419,7 @@ export default function App() {
       })
 
       setAdminMsg(data.message)
-      loadAdmin()
+      await loadAdmin()
     } catch (err) {
       setAdminMsg(err.message)
     }
@@ -406,12 +433,29 @@ export default function App() {
       <header className="hero">
         <nav className="nav">
           <div className="logo">Fashion Shop Telegram</div>
+
           <div className="nav-actions">
-            <button className="ghost" onClick={() => setView('catalog')}>Каталог</button>
-            <button className="ghost" onClick={() => setView('auth')}>Login/Register</button>
-            <button className="ghost" onClick={() => setView('myorders')}>Менин заказдарым</button>
-            <button className="ghost" onClick={() => { setView('admin'); loadAdmin() }}>Admin</button>
-            <button onClick={() => setCartOpen(true)}>🛒 Корзина <span>{cartCount}</span></button>
+            <button className="ghost" onClick={() => setView('catalog')}>
+              Каталог
+            </button>
+            <button className="ghost" onClick={() => setView('auth')}>
+              Login/Register
+            </button>
+            <button className="ghost" onClick={() => setView('myorders')}>
+              Менин заказдарым
+            </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setView('admin')
+                loadAdmin()
+              }}
+            >
+              Admin
+            </button>
+            <button onClick={() => setCartOpen(true)}>
+              🛒 Корзина <span>{cartCount}</span>
+            </button>
           </div>
         </nav>
 
@@ -434,14 +478,20 @@ export default function App() {
               <select value={category} onChange={(e) => setCategory(e.target.value)}>
                 <option value="">Бардык категория</option>
                 {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="grid">
               {filteredProducts.map((product) => (
-                <ProductCard key={product.id} product={product} onAdd={addToCart} />
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onAdd={addToCart}
+                />
               ))}
             </div>
           </>
@@ -455,21 +505,27 @@ export default function App() {
                 <input
                   placeholder="Атыңыз"
                   value={registerForm.full_name}
-                  onChange={(e) => setRegisterForm({ ...registerForm, full_name: e.target.value })}
+                  onChange={(e) =>
+                    setRegisterForm({ ...registerForm, full_name: e.target.value })
+                  }
                   required
                 />
                 <input
                   type="email"
                   placeholder="Email"
                   value={registerForm.email}
-                  onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+                  onChange={(e) =>
+                    setRegisterForm({ ...registerForm, email: e.target.value })
+                  }
                   required
                 />
                 <input
                   type="password"
                   placeholder="Пароль"
                   value={registerForm.password}
-                  onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+                  onChange={(e) =>
+                    setRegisterForm({ ...registerForm, password: e.target.value })
+                  }
                   required
                 />
                 <button type="submit">Катталуу</button>
@@ -484,14 +540,18 @@ export default function App() {
                   type="email"
                   placeholder="Email"
                   value={loginForm.email}
-                  onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                  onChange={(e) =>
+                    setLoginForm({ ...loginForm, email: e.target.value })
+                  }
                   required
                 />
                 <input
                   type="password"
                   placeholder="Пароль"
                   value={loginForm.password}
-                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  onChange={(e) =>
+                    setLoginForm({ ...loginForm, password: e.target.value })
+                  }
                   required
                 />
                 <button type="submit">Кирүү</button>
@@ -517,20 +577,31 @@ export default function App() {
 
             <div className="msg">{myOrdersMsg}</div>
 
-            {myOrders.length ? myOrders.map((order) => (
-              <div className="order-card" key={order.id}>
-                <b>Заказ №{order.id}</b><br />
-                Телефон: {order.phone}<br />
-                Дарек: {order.address}<br />
-                Төлөм: {order.payment_method}<br />
-                Статус: <b>{order.status}</b><br />
-                Жалпы: {Math.round(order.total)} сом<br /><br />
+            {myOrders.length ? (
+              myOrders.map((order) => (
+                <div className="order-card" key={order.id}>
+                  <b>Заказ №{order.id}</b>
+                  <br />
+                  Телефон: {order.phone}
+                  <br />
+                  Дарек: {order.address}
+                  <br />
+                  Төлөм: {order.payment_method}
+                  <br />
+                  Статус: <b>{order.status}</b>
+                  <br />
+                  Жалпы: {Math.round(order.total)} сом
+                  <br />
+                  <br />
 
-                {(order.status === 'new' || order.status === 'confirmed') && (
-                  <button onClick={() => cancelOrder(order.id)}>Заказды отмена кылуу</button>
-                )}
-              </div>
-            )) : (
+                  {(order.status === 'new' || order.status === 'confirmed') && (
+                    <button onClick={() => cancelOrder(order.id)}>
+                      Заказды отмена кылуу
+                    </button>
+                  )}
+                </div>
+              ))
+            ) : (
               <div className="msg">Азырынча заказ жок.</div>
             )}
           </section>
@@ -544,10 +615,18 @@ export default function App() {
                 <div className="stats">
                   {stats ? (
                     <>
-                      <div className="stat">Товарлар<b>{stats.products_count}</b></div>
-                      <div className="stat">Заказдар<b>{stats.orders_count}</b></div>
-                      <div className="stat">Колдонуучулар<b>{stats.users_count}</b></div>
-                      <div className="stat">Киреше<b>{Math.round(stats.revenue)} сом</b></div>
+                      <div className="stat">
+                        Товарлар<b>{stats.products_count}</b>
+                      </div>
+                      <div className="stat">
+                        Заказдар<b>{stats.orders_count}</b>
+                      </div>
+                      <div className="stat">
+                        Колдонуучулар<b>{stats.users_count}</b>
+                      </div>
+                      <div className="stat">
+                        Киреше<b>{Math.round(stats.revenue)} сом</b>
+                      </div>
                     </>
                   ) : (
                     <div className="msg">Admin кирүүсү керек.</div>
@@ -561,78 +640,54 @@ export default function App() {
                   <input
                     placeholder="Аты"
                     value={productForm.name}
-                    onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, name: e.target.value })
+                    }
                     required
                   />
                   <input
                     placeholder="Категория"
                     value={productForm.category}
-                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, category: e.target.value })
+                    }
                     required
                   />
                   <input
                     type="number"
                     placeholder="Баа"
                     value={productForm.price}
-                    onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, price: e.target.value })
+                    }
                     required
                   />
                   <input
                     type="number"
                     placeholder="Эски баа"
                     value={productForm.old_price}
-                    onChange={(e) => setProductForm({ ...productForm, old_price: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, old_price: e.target.value })
+                    }
                     required
                   />
                   <input
                     placeholder="Размерлер: S,M,L"
                     value={productForm.sizes}
-                    onChange={(e) => setProductForm({ ...productForm, sizes: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, sizes: e.target.value })
+                    }
                     required
                   />
                   <input
                     placeholder="Түстөр: Ак,Кара"
                     value={productForm.colors}
-                    onChange={(e) => setProductForm({ ...productForm, colors: e.target.value })}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, colors: e.target.value })
+                    }
                     required
                   />
                   <input
                     placeholder="Сүрөт URL"
                     value={productForm.image}
-                    onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                    required
-                  />
-                  <textarea
-                    placeholder="Сүрөттөмө"
-                    value={productForm.description}
-                    onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
-                    required
-                  />
-                  <input
-                    type="number"
-                    placeholder="Саны"
-                    value={productForm.stock}
-                    onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })}
-                    required
-                  />
-                  <button type="submit">Кошуу</button>
-                </form>
-                <div className="msg">{adminMsg}</div>
-              </div>
-            </div>
-
-            <div className="panel">
-              <h2>Заказдар</h2>
-              {orders.length ? orders.map((order) => (
-                <div className="order-card" key={order.id}>
-                  <b>Заказ №{order.id}</b><br />
-                  Кардар: {order.customer_name}<br />
-                  Телефон: {order.phone}<br />
-                  Дарек: {order.address}<br />
-                  Төлөм: {order.payment_method}<br />
-                  Статус: <b>{order.status}</b><br />
-                  Жалпы: {Math.round(order.total)} сом<br /><br />
-
-                  <select
-                    value={order.status || 'new'}
-                    onChange={(e) => updateOrderStatus(order.id, e.target.
+                    onChange={(e) =>
